@@ -181,6 +181,7 @@ func runLinux(args []string) {
 	dumps := fs.String("dump", "", "comma separated addr:len memory ranges to hex dump at the end")
 	g3a := fs.String("g3a", "", "boot through this loader add-in instead of loading -kernel directly")
 	fsFile := fs.String("file", "", "with -g3a: host file served as \\\\fls0\\linux.bin")
+	flashPath := fs.String("flash", "", "NOR flash image (e.g. a dump of a real calculator); default all 0xFF")
 	fs.Parse(args)
 
 	DramBase, DramSize = cg20DramBase, cg20DramSize
@@ -199,7 +200,14 @@ func runLinux(args []string) {
 		os.Exit(2)
 	}
 
-	e := NewEmulator(nil)
+	var flash []byte
+	if *flashPath != "" {
+		if flash, err = os.ReadFile(*flashPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	e := NewEmulator(flash)
 	m := e.mmio
 	m.timerPeriod = 1 << 62 // no Casio OS tick
 	m.timerNext = 1 << 62
