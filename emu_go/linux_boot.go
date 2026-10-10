@@ -181,14 +181,19 @@ func runLinux(args []string) {
 	dumps := fs.String("dump", "", "comma separated addr:len memory ranges to hex dump at the end")
 	g3a := fs.String("g3a", "", "boot through this loader add-in instead of loading -kernel directly")
 	fsFile := fs.String("file", "", "with -g3a: host file served as \\\\fls0\\linux.bin")
+	flsFiles := fs.String("fls", "", "with -g3a: more files for the add-in, NAME=PATH,... (\\\\fls0\\NAME)")
+	getKeys := fs.String("getkey", "", "with -g3a: the key codes GetKey returns, comma separated (then EXE)")
 	flashPath := fs.String("flash", "", "NOR flash image (e.g. a dump of a real calculator); default all 0xFF")
+	start := fs.Uint64("start", 0, "without -kernel or -g3a: start the CPU here (a kernel that runs in place from -flash)")
+	flashWrites := fs.Bool("flash-writes", false, "report every write to the flash (address, value, pc) and count them")
+	flashOut := fs.String("flash-out", "", "write the 32 MiB NOR flash to this file at the end (what the kernel programmed and erased)")
 	fs.Parse(args)
 
 	DramBase, DramSize = cg20DramBase, cg20DramSize
 
 	var img []byte
 	var err error
-	if *g3a == "" {
+	if *g3a == "" && *start == 0 {
 		if img, err = os.ReadFile(*kernel); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -226,11 +231,32 @@ func runLinux(args []string) {
 
 	cpu := e.cpu
 	cpu.sysExceptions = true
+	if *flashWrites {
+		e.mem.fwrites = map[uint32]int{}
+		e.mem.fwLog = 100
+	}
 	if *g3a != "" {
-		if err := startAddin(e, *g3a, *fsFile); err != nil {
+		files := map[string]string{}
+		for _, f := range strings.Split(*flsFiles, ",") {
+			if name, path, ok := strings.Cut(f, "="); ok {
+				files[name] = path
+			}
+		}
+		var keys []uint32
+		for _, k := range strings.Split(*getKeys, ",") {
+			var v uint32
+			if _, err := fmt.Sscan(k, &v); err == nil {
+				keys = append(keys, v)
+			}
+		}
+		if err := startAddin(e, *g3a, *fsFile, files, keys); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
+	} else if *start != 0 {
+		cpu.setSR(srMD | srRB | srBL | srIMASK)
+		cpu.vbr = 0
+		cpu.pc = uint32(*start)
 	} else {
 		if uint32(len(img)) > DramSize {
 			fmt.Fprintln(os.Stderr, "zImage too large")
@@ -321,6 +347,18 @@ func runLinux(args []string) {
 	}
 	if *pngOut != "" {
 		if err := writePNG(m.lcd, *pngOut); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}
+	if *flashWrites {
+		n := 0
+		for _, c := range e.mem.fwrites {
+			n += c
+		}
+		fmt.Printf("==== flash writes: %d ====\n", n)
+	}
+	if *flashOut != "" {
+		if err := os.WriteFile(*flashOut, e.mem.flash, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}

@@ -24,7 +24,10 @@ const (
 	syscallEntry  = 0x80020070
 )
 
-func startAddin(e *Emulator, g3aPath, filePath string) error {
+// startAddin runs the add-in g3aPath. files are what \\fls0\NAME opens (host
+// paths by name; filePath is linux.bin), keys the codes GetKey returns in turn
+// (EXE once they are used up).
+func startAddin(e *Emulator, g3aPath, filePath string, files map[string]string, keys []uint32) error {
 	g, err := os.ReadFile(g3aPath)
 	if err != nil {
 		return err
@@ -35,12 +38,18 @@ func startAddin(e *Emulator, g3aPath, filePath string) error {
 	code := g[0x7000 : len(g)-4]
 	copy(e.mem.flash[addinCode:], code)
 
-	var file []byte
+	contents := map[string][]byte{}
 	if filePath != "" {
-		if file, err = os.ReadFile(filePath); err != nil {
+		files[`linux.bin`] = filePath
+	}
+	for name, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
 			return err
 		}
+		contents[`\\fls0\`+name] = data
 	}
+	open := map[uint32][]byte{}
 
 	c := e.mmio.ccn
 	const flags = 0x100 | 0x60 | 0x8 | 0x4 | 0x2 // V, PR=RW, C, D, SH
@@ -59,7 +68,7 @@ func startAddin(e *Emulator, g3aPath, filePath string) error {
 	cpu.pc = addinCode
 
 	heap := uint32(heapStart + 0x100)
-	fd := -1
+	nextFd := uint32(3)
 	str := func(a uint32) string {
 		var sb strings.Builder
 		for i := uint32(0); i < 64; i++ {
@@ -79,8 +88,12 @@ func startAddin(e *Emulator, g3aPath, filePath string) error {
 		case 0x0029, 0x0272, 0x025F, 0x0921, 0x02B7: // exec check, Bdisp_*, color, status area
 		case 0x18F9: // PrintXY(x, y, "xx"+text, mode, color)
 			fmt.Printf("[addin] %2d: %s\n", r[5], strings.TrimPrefix(str(r[6])[2:], ""))
-		case 0x0EAB: // GetKey(&key): always EXE
-			e.mem.W32(r[4], 30004)
+		case 0x0EAB: // GetKey(&key): the next of keys, then EXE
+			k := uint32(30004)
+			if len(keys) > 0 {
+				k, keys = keys[0], keys[1:]
+			}
+			e.mem.W32(r[4], k)
 			ret = 1
 		case 0x01E6: // GetVRAMAddress
 			ret = 0xA8000000
@@ -95,17 +108,19 @@ func startAddin(e *Emulator, g3aPath, filePath string) error {
 			}
 			name := sb.String()
 			fmt.Printf("[addin] open %q\n", name)
-			if name == `\\fls0\linux.bin` && file != nil {
-				fd = 3
-				ret = 3
+			if data, ok := contents[name]; ok {
+				open[nextFd] = data
+				ret = nextFd
+				nextFd++
 			} else {
 				ret = 0xFFFFFFFF
 			}
 		case 0x1DA6: // Bfile_GetFileSize_OS
-			ret = uint32(len(file))
+			ret = uint32(len(open[r[4]]))
 		case 0x1DAC: // Bfile_ReadFile_OS(fd, buf, size, pos)
 			buf, n, pos := r[5], r[6], r[7]
-			if int(r[4]) != fd || pos > uint32(len(file)) {
+			file, ok := open[r[4]]
+			if !ok || pos > uint32(len(file)) {
 				ret = 0xFFFFFFFF
 				break
 			}
@@ -117,6 +132,7 @@ func startAddin(e *Emulator, g3aPath, filePath string) error {
 			}
 			ret = n
 		case 0x1DA4: // Bfile_CloseFile_OS
+			delete(open, r[4])
 		case 0x1F44: // sys_malloc(size)
 			n := (r[4] + 7) &^ 7
 			if heap+n+8 <= heapEnd {

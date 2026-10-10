@@ -276,7 +276,11 @@ func (m *Memory) Write(va, size, val uint32) {
 		if m.fwrites != nil {
 			m.fwrites[phys&^0x7FFF]++
 			if m.fwLog > 0 {
-				fmt.Printf("  [flashwr] va=0x%08x phys=0x%08x size=%d val=0x%x st=%d\n", va, phys, size, val, m.fcmd)
+				pc := uint32(0)
+				if m.cpu != nil {
+					pc = m.cpu.pc
+				}
+				fmt.Printf("  [flashwr] pc=0x%08x va=0x%08x phys=0x%08x size=%d val=0x%x st=%d\n", pc, va, phys, size, val, m.fcmd)
 				m.fwLog--
 			}
 		}
