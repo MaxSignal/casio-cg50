@@ -14,8 +14,6 @@ import (
 const (
 	FlashSize   = 0x08000000 // NOR flash window; image is a prefix, rest reads 0xFF
 	FlashMutTop = 0x02000000 // mutable/writable flash extent (32MB): OS image + fls0 storage tail
-	DramBase    = 0x0C000000
-	DramSize    = 0x00800000 // 8 MB
 	IlramBase   = 0xFD800000
 	IlramSize   = 0x00010000 // 64 KB
 	OcramBase   = 0xFE200000 // on-chip RAM the OS uses for kernel lists/structs (swept 0xFE380000.. etc)
@@ -24,6 +22,13 @@ const (
 	// 0xE5200000 where gint relocates its interrupt callback; the OS never touches them.
 	XyramBase = 0xE5000000
 	XyramSize = 0x00210000
+)
+
+// DRAM placement. The fx-CG50 has 8 MB at 0x0C000000; the fx-CG10/20 (Prizm) has 2 MB at
+// 0x08000000 (selected by the bare-metal Linux runner, linux_boot.go).
+var (
+	DramBase uint32 = 0x0C000000
+	DramSize uint32 = 0x00800000
 )
 
 // NOR-flash command-state-machine states (AMD/Spansion JEDEC command set). The fls0

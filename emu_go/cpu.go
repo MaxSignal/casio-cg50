@@ -62,6 +62,34 @@ type CPU struct {
 	ubc     *ubcUnit // the User Break Controller (ubc.go); nil without an MMIO bus
 	ubcOn   bool     // a UBC channel is enabled: every instruction goes through stepUBC
 	faulted bool     // stepMMU took an MMU exception (cleared by stepUBC)
+
+	ldst bool // SH-4A LDST flag: set by movli.l, consumed by movco.l, cleared by exceptions
+
+	// sysExceptions delivers trapa / illegal instructions to the guest's VBR+0x100 handler
+	// instead of halting the emulator (the bare-metal Linux runner turns it on).
+	sysExceptions bool
+}
+
+// Exception codes (EXPEVT) for the general exceptions delivered by raiseException.
+const (
+	expTrapa        = 0x160
+	expIllegal      = 0x180
+	expSlotIllegal  = 0x1A0
+	ccnTRA          = 0xFF000020
+	ccnEXPEVTAbs    = 0xFF000024
+	vbrGeneralEntry = 0x100
+)
+
+// raiseException enters the general exception handler: SSR/SPC/SGR save the context, the
+// CPU switches to privileged mode, register bank 1 and BL=1, and jumps to VBR+0x100.
+func (c *CPU) raiseException(expevt, spc uint32) {
+	c.ldst = false
+	c.ssr = c.sr
+	c.spc = spc
+	c.sgr = c.r[15]
+	c.mem.Write(ccnEXPEVTAbs, 4, expevt)
+	c.setSR(c.sr | srMD | srRB | srBL)
+	c.pc = c.vbr + vbrGeneralEntry
 }
 
 func NewCPU(mem *Memory) *CPU {
@@ -153,6 +181,7 @@ func (c *CPU) acceptInterrupt() bool {
 		return false
 	}
 	c.pending = append(c.pending[:i], c.pending[i+1:]...)
+	c.ldst = false
 	c.ssr = c.sr
 	c.spc = c.pc
 	c.sgr = c.r[15]
@@ -391,8 +420,22 @@ func (c *CPU) execute(op uint32) {
 		case 0x23: // braf
 			c.branchDelayed(c.pc + 2 + r[n])
 			return
-		case 0x83, 0x93, 0xA3, 0xB3, 0xC3, 0xD3, 0xE3:
-			return // pref/ocbi/... -> nop
+		case 0xC3: // movca.l R0,@Rn: a plain store as far as memory is concerned
+			mem.W32(r[n], r[0])
+			return
+		case 0x63: // movli.l @Rn,R0 (SH-4A): load and set LDST
+			r[0] = mem.R32(r[n])
+			c.ldst = true
+			return
+		case 0x73: // movco.l R0,@Rn (SH-4A): store iff LDST, T = success
+			if c.ldst {
+				mem.W32(r[n], r[0])
+			}
+			c.setT(c.ldst)
+			c.ldst = false
+			return
+		case 0x83, 0x93, 0xA3, 0xB3, 0xD3, 0xE3:
+			return // pref/ocbi/ocbp/ocbwb/prefi/icbi -> nop
 		}
 		if (op & 0x8F) == 0x82 { // stc Rm_bank,Rn
 			r[n] = c.rbank1[(op>>4)&7]
@@ -722,8 +765,13 @@ func (c *CPU) execute(op uint32) {
 		case 0x2:
 			mem.W32(c.gbr+d8*4, r[0])
 			return
-		case 0x3:
-			panic(IllegalInstruction{op, c.pc - 2}) // trapa
+		case 0x3: // trapa #imm
+			if !c.sysExceptions {
+				panic(IllegalInstruction{op, c.pc - 2})
+			}
+			c.mem.Write(ccnTRA, 4, d8<<2)
+			c.raiseException(expTrapa, c.pc)
+			return
 		case 0x4:
 			r[0] = uint32(s8(mem.R8(c.gbr + d8)))
 			return
@@ -979,6 +1027,17 @@ func (c *CPU) exec4(op, n, m, d8 uint32) {
 		v := mem.R8(r[n])
 		c.setT(v == 0)
 		mem.W8(r[n], v|0x80)
+		return
+	case 0xA9: // movua.l @Rm,R0 (SH-4A unaligned load; Rm is the n field here)
+		a := r[n]
+		r[0] = mem.R8(a)<<24 | mem.R8(a+1)<<16 | mem.R8(a+2)<<8 | mem.R8(a+3)
+		return
+	case 0xE9: // movua.l @Rm+,R0
+		a := r[n]
+		r[0] = mem.R8(a)<<24 | mem.R8(a+1)<<16 | mem.R8(a+2)<<8 | mem.R8(a+3)
+		if n != 0 {
+			r[n] += 4
+		}
 		return
 	}
 	if (op & 0x8F) == 0x8E { // ldc Rn,Rm_bank
