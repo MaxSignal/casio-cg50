@@ -262,7 +262,7 @@ func runLinux(args []string) {
 		}
 		last = cur
 
-		if !typed && strings.Contains(lastNonEmpty(rows[:textRows-1]), strings.TrimSpace(*prompt)) {
+		if !typed && strings.HasSuffix(lastNonEmpty(rows[:textRows-1]), strings.TrimSpace(*prompt)) {
 			typed = true
 			s := strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\e`, "\x1b").Replace(*typing)
 			for i := 0; i < len(s); i++ {
