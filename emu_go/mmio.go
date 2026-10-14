@@ -34,6 +34,23 @@ func (b *base) read(va, size uint32) uint32 {
 }
 func (b *base) write(va, size, val uint32) { b.regs[va-b.bs] = val }
 
+// txPin: PFC port J data (0xA4050130), passed through to the PFC, counting the changes of
+// bit 2, the transmit pin of the 3-pin port that Linux toggles to make tones.
+type txPin struct {
+	pfc     *base
+	toggles uint64
+}
+
+func (t *txPin) contains(va uint32) bool    { return va == 0xA4050130 }
+func (t *txPin) name() string               { return "PFC" }
+func (t *txPin) read(va, size uint32) uint32 { return t.pfc.read(va, size) }
+func (t *txPin) write(va, size, val uint32) {
+	if (t.pfc.regs[0x130]^val)&4 != 0 {
+		t.toggles++
+	}
+	t.pfc.write(va, size, val)
+}
+
 // CPG: boot PLL routine spins on 'ready' bit0 at +0x60 -> return 0 so it exits.
 type cpg struct{ base }
 
@@ -428,6 +445,7 @@ type MMIOBus struct {
 	periphIRQ *periphIRQ
 	etmu2     *etmuCounter
 	tmu       *tmu      // TMU0-2 (gtimer.go); ETMU0-5 live in etmu2
+	tx        *txPin    // the 3-pin port's transmit pin
 	intc      *intcUnit // priority/mask gate for every interrupt source (intc.go)
 	cpu       *CPU
 	unknown   map[uint32]int
@@ -521,6 +539,7 @@ func NewMMIOBus() *MMIOBus {
 	b.keysc.bus = b
 	pfc := &base{nm: "PFC", bs: 0xA4050000, sz: 0x1000, regs: map[uint32]uint32{}}
 	b.lcd = newLCD(pfc)
+	b.tx = &txPin{pfc: pfc}
 	b.ccn = &ccn{base: newBase("CCN", 0xFF000000, 0x1000)}
 	b.cpuopm = &base{nm: "CPUOPM", bs: 0xFF2F0000, sz: 4, regs: map[uint32]uint32{}}
 	cpg := &cpg{base: newBase("CPG", 0xA4150000, 0x1000)}
@@ -528,6 +547,7 @@ func NewMMIOBus() *MMIOBus {
 	b.regions = []region{
 		b.cpuopm,
 		cpg,
+		b.tx, // before the PFC it is part of
 		pfc,
 		&base{nm: "WDT", bs: 0xA4520000, sz: 0x1000, regs: map[uint32]uint32{}},
 		b.intc,

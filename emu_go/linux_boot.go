@@ -321,6 +321,7 @@ func runLinux(args []string) {
 	fmt.Printf("==== screen after %d M instructions (pc=%08x) ====\n", cpu.cycles/1_000_000, cpu.pc)
 	fmt.Println(last)
 	fmt.Printf("==== backlight register R5A1: %d ====\n", m.lcd.reg[0x5a1])
+	fmt.Printf("==== 3-pin transmit pin changes: %d ====\n", m.tx.toggles)
 	for _, d := range strings.Split(*dumps, ",") {
 		if d == "" {
 			continue
