@@ -91,6 +91,10 @@ func dumpFB(mem *Memory, cached uint32, path string) {
 // Runner: boot the 3.60 full flash and run, optionally with the periodic timer.
 // Usage: go run . [maxIns] [timerPeriod]   (timerPeriod 0 = no interrupts)
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "boot20" {
+		runBoot20(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "linux" {
 		runLinux(os.Args[2:])
 		return
