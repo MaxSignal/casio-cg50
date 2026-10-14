@@ -27,7 +27,8 @@ func runBoot20(args []string) {
 	every := fs.Uint64("every", 20_000, "sample the PC every N instructions")
 	pngOut := fs.String("png", "", "write the final screen to this PNG")
 	exeEvery := fs.Uint64("exe", 0, "press a key every N instructions (0: never)")
-	keyList := fs.String("keys", "2,1", "with -exe: the keys pressed in turn, round and round (row,col ...; 2,1 is EXE)")
+	keyList := fs.String("keys", "2,1", "with -exe: the keys pressed in turn (row,col ...; 2,1 is EXE), round and round, or once each with -once")
+	once := fs.Bool("once", false, "with -keys: press each key once, then no more")
 	writes := fs.Bool("writes", false, "count the writes to the flash by 128 KiB sector")
 	flashOut := fs.String("flash-out", "", "write the flash to this file at the end")
 	shots := fs.Uint64("shots", 0, "with -png: also save the screen every N instructions (PNG-N.png)")
@@ -59,7 +60,7 @@ func runBoot20(args []string) {
 	firstOS := uint64(0)
 	for cpu.cycles < *maxIns {
 		e.Step(int(*every))
-		if *exeEvery != 0 && cpu.cycles >= nextExe {
+		if *exeEvery != 0 && cpu.cycles >= nextExe && !(*once && nkey >= len(keys)) {
 			k := keys[nkey%len(keys)]
 			e.InjectKey(k[0], k[1])
 			nkey++
