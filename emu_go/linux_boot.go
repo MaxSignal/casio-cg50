@@ -133,7 +133,7 @@ var plainKeys = map[byte]kpos{
 	'=': {6, 6}, '\'': {5, 6}, '"': {4, 6}, '#': {3, 6}, '!': {2, 6}, '?': {1, 6},
 	'^': {4, 7}, 0x1b: {3, 7}, '\t': {5, 8}, '~': {4, 8},
 	'|': {6, 9}, '>': {5, 9}, '<': {4, 9}, '&': {3, 9}, ';': {2, 9}, '$': {1, 9},
-	0x03: {0, 0},
+	0x03: {0, 0}, 0x0f: {3, 8}, // AC/ON (^C), MENU (CTRL)
 }
 
 var shiftKeys = map[byte]kpos{
@@ -159,6 +159,9 @@ func keysFor(ch byte) ([]kpos, error) {
 	if k, ok := alphaKeys[ch]; ok {
 		return []kpos{kAlpha, k}, nil
 	}
+	if ch == 0x0e { // SHIFT AC/ON: sleep
+		return []kpos{kShift, {0, 0}}, nil
+	}
 	if ch >= 'A' && ch <= 'Z' {
 		return []kpos{kAlpha, kShift, alphaKeys[ch+'a'-'A']}, nil
 	}
@@ -172,7 +175,7 @@ func runLinux(args []string) {
 	load := fs.Uint64("load", 0x88040000, "address the loader copies the zImage to")
 	maxIns := fs.Uint64("ins", 600_000_000, "instructions to run")
 	ips := fs.Uint64("ips", 58_000_000, "emulated instructions per second (sets the time base)")
-	typing := fs.String("type", "", "text to type once the shell prompt appears (\\n = EXE)")
+	typing := fs.String("type", "", "text to type once the shell prompt appears (\\n = EXE, \\e = EXIT, \\c = MENU (CTRL), \\s = SHIFT AC/ON)")
 	prompt := fs.String("prompt", "# ", "screen text that means the shell is ready for -type")
 	pngOut := fs.String("png", "", "write the final screen to this PNG")
 	verbose := fs.Bool("v", false, "print the screen whenever it changes")
@@ -290,7 +293,8 @@ func runLinux(args []string) {
 
 		if !typed && strings.HasSuffix(lastNonEmpty(rows[:textRows-1]), strings.TrimSpace(*prompt)) {
 			typed = true
-			s := strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\e`, "\x1b").Replace(*typing)
+			s := strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\e`, "\x1b",
+				`\s`, "\x0e", `\c`, "\x0f").Replace(*typing)
 			for i := 0; i < len(s); i++ {
 				k, err := keysFor(s[i])
 				if err != nil {
@@ -316,6 +320,7 @@ func runLinux(args []string) {
 	}
 	fmt.Printf("==== screen after %d M instructions (pc=%08x) ====\n", cpu.cycles/1_000_000, cpu.pc)
 	fmt.Println(last)
+	fmt.Printf("==== backlight register R5A1: %d ====\n", m.lcd.reg[0x5a1])
 	for _, d := range strings.Split(*dumps, ",") {
 		if d == "" {
 			continue
